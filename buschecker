@@ -1,0 +1,198 @@
+#!/bin/zsh
+
+
+APIKEY=''
+TSTAMP=''
+MDKEY=''
+STOPID=''
+STOPALIAS=''
+
+GetKey(){
+	if [ -d /usr/share/buschecker ]; then
+               	if [ -f /usr/share/buschecker/APIKEY ]; then
+                	APIKEY=$(cat /usr/share/buschecker/APIKEY)
+			TSTAMP=$(date '+%Y%m%d%H')
+			MDKEY=$(echo -n $APIKEY$TSTAMP | md5sum | cut -d ' ' -f1)
+        	fi
+	fi
+}
+
+SetKey(){
+	if [ ! -d /usr/share/buschecker ]; then
+		sudo mkdir /usr/share/buschecker
+	fi
+	if [ -f /usr/share/buschecker/APIKEY ]; then
+		sudo rm /usr/share/buschecker/APIKEY
+	fi
+	sudo echo $APIKEY > /usr/share/buschecker/APIKEY
+}
+
+ShowKey(){
+	if [ -f /usr/share/buschecker/APIKEY ]; then
+                cat /usr/share/buschecker/APIKEY
+        fi
+}
+
+SaveStop(){
+	if [ -f ~/.buscheckrc ]; then
+	
+	else
+		echo "ALIAS ID" >> ~/.buscheckrc
+	fi
+	echo "$STOPALIAS $STOPID" >> ~/.buscheckrc
+	echo "Added $STOPID as $STOPALIAS to ~/.buscheckrc"
+}
+
+
+GetStopID(){
+	STOPID=$(grep $STOPALIAS ~/.buscheckrc | cut -d " " -f2)
+	if [ -z $STOPID ]; then
+		echo 'Alias '$STOPALIAS' Not Found in ~/.buscheckrc \nCheck -h for help'
+		exit 0;
+	fi
+}
+
+GetBusTime(){
+	#echo $APIKEY$TSTAMP
+	#echo $MDKEY
+	curl -s --URL 'http://ws.mybustracker.co.uk/?module=json&key='$MDKEY'&function=getBusTimes&stopId='$STOPID > ~/.busjson
+	
+	echo 'Service : Time' >> ~/.tempbus
+	LEN=$(cat ~/.busjson | jq '.busTimes | length')
+#insert loop looping through bus and their times using jq
+	for (( c=0; c<$LEN; c++ ))
+	do	
+		BUS=$(cat ~/.busjson | jq '.busTimes['$c'].mnemoService')
+		BUS="${BUS%\"}"
+		BUS="${BUS#\"}"
+		TIMES=$(cat ~/.busjson | jq '.busTimes['$c'].timeDatas | length')
+		for (( a=0; a<$TIMES; a++ ))
+		do
+			MINS=$(cat ~/.busjson | jq '.busTimes['$c'].timeDatas['$a'].minutes')
+			TIME=$(cat ~/.busjson | jq '.busTimes['$c'].timeDatas['$a'].time')
+			TIME="${TIME%\"}"
+			TIME="${TIME#\"}"
+			if (( $MINS < 60 )); then
+				echo $BUS' : '$MINS >> ~/.tempbus
+			else
+				echo $BUS' : '$TIME >> ~/.tempbus
+			fi
+		done
+	done
+	column -t ~/.tempbus
+	rm ~/.tempbus
+	rm ~/.busjson
+}
+
+DisplayAlias(){
+	column -t ~/.buscheckrc
+}
+
+DisplayHelp(){
+	echo '============================================================'
+	echo '# buscheck v0.01 by klaatu                                 #'
+	echo '# Termninal based buschecker for edinburgh busses.         #'
+	echo '# Created using the My BusTracker API                      #'
+	echo '============================================================'
+	echo 'Arguments:\n'
+	echo '	-a | -add | --add <alias> <stopid>'
+	echo '	Add an alias for a bus stop id \n'
+	echo '	-n | -name | --name <alias>'
+	echo '	Display the bus times for the stop with that nickname \n'
+	echo '	-i | -id | --id <stopid>'
+	echo '	Display the bus times for the stop with that ID \n'
+	echo '	-d | -disp | --display'
+	echo '	Display a list of current aliases \n'
+	echo '	--clear'
+	echo '	Clear all user defined aliases\n'
+	echo '	-s | -search | --search'
+	echo '	Search for a stop name to get the spot id\n'
+}
+
+GetBusStops(){
+	if [ -f ~/.buscheckinfo ]; then
+
+	else
+		curl --URL 'http://ws.mybustracker.co.uk/?module=json&key='$MDKEY'&function=getBusStops' > ~/.busjson
+		cat .busjson | jq '.busStops[].stopId' > ~/.tmpbus1
+		cat .busjson | jq '.busStops[].name' > ~/.tmpbus2
+  		paste -d' ' ~/.tmpbus1 ~/.tmpbus2 > ~/.buscheckinfo
+		rm ~/.tmpbus1
+		rm ~/.tmpbus2
+	fi
+	#rm ~/.busjson
+}
+
+WrongArgs(){
+	echo 'Wrong arguments supplied please check help with -h'
+}
+
+WORD=''
+
+Search(){
+	GetBusStops;
+	grep --color=auto -i $WORD ~/.buscheckinfo
+}
+
+#main
+
+if [ -z "$1" ]; then
+	WrongArgs;
+else
+	GetKey;
+	case "$1" in
+		-h | -help |--help ) 
+			DisplayHelp; 
+			exit 0 ;;
+		-a | -add | --add)
+			if [ -z "$2" ] || [ -z $3 ]; then
+				WrongArgs;
+				exit 0;
+			else 
+	                        STOPALIAS=$2 ; 
+                        	STOPID=$3; 
+			fi  
+			SaveStop;
+			exit 0 ;;
+		-d | -disp | --display) 
+			DisplayAlias; 
+			exit 0;;
+		-n | -name | --name) 
+			if [ -z "$2" ]; then
+				WrongArgs;
+				exit 0;  
+			else 
+				STOPALIAS=$2; 
+			fi
+			GetStopID ; 
+			GetBusTime; 
+			exit 0;;
+		-i | -id | --id) 
+			if [ -z "$2" ]; then
+                                WrongArgs;
+                                exit 0;
+                        else
+                                STOPID=$2;
+                        fi 
+			GetBusTime; 
+			exit 0;;
+		--clear) 
+			rm ~/.buscheckrc; echo 'Cleared aliased stops' ; 
+			exit 0;;
+		--update)
+			GetBusStops;
+			exit 0;;
+		-s | -search | --search)
+			WORD=$2;
+			Search;
+			exit 0;;
+		-k | -key)
+			if [ -z "$2" ]; then
+				ShowKey;
+				exit 0;			
+			fi
+			APIKEY=$2;
+                        SetKey;
+			exit 0;;
+	esac
+fi
